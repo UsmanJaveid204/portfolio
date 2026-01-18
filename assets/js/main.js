@@ -169,34 +169,34 @@
   }
 
   /**
-   * Porfolio isotope and filter
+   * Porfolio isotope and filter (disabled - using Swiper instead)
    */
-  window.addEventListener('load', () => {
-    let portfolioContainer = select('.portfolio-container');
-    if (portfolioContainer) {
-      let portfolioIsotope = new Isotope(portfolioContainer, {
-        itemSelector: '.portfolio-item'
-      });
+  // Commented out Isotope since we're using Swiper for horizontal scrolling
+  // window.addEventListener('load', () => {
+  //   let portfolioContainer = select('.portfolio-container');
+  //   if (portfolioContainer && !portfolioContainer.closest('.swiper')) {
+  //     let portfolioIsotope = new Isotope(portfolioContainer, {
+  //       itemSelector: '.portfolio-item'
+  //     });
 
-      let portfolioFilters = select('#portfolio-flters li', true);
+  //     let portfolioFilters = select('#portfolio-flters li', true);
 
-      on('click', '#portfolio-flters li', function(e) {
-        e.preventDefault();
-        portfolioFilters.forEach(function(el) {
-          el.classList.remove('filter-active');
-        });
-        this.classList.add('filter-active');
+  //     on('click', '#portfolio-flters li', function(e) {
+  //       e.preventDefault();
+  //       portfolioFilters.forEach(function(el) {
+  //         el.classList.remove('filter-active');
+  //       });
+  //       this.classList.add('filter-active');
 
-        portfolioIsotope.arrange({
-          filter: this.getAttribute('data-filter')
-        });
-        portfolioIsotope.on('arrangeComplete', function() {
-          AOS.refresh()
-        });
-      }, true);
-    }
-
-  });
+  //       portfolioIsotope.arrange({
+  //         filter: this.getAttribute('data-filter')
+  //       });
+  //       portfolioIsotope.on('arrangeComplete', function() {
+  //         AOS.refresh()
+  //       });
+  //     }, true);
+  //   }
+  // });
 
   /**
    * Initiate portfolio lightbox 
@@ -246,6 +246,236 @@
       el: '.swiper-pagination',
       type: 'bullets',
       clickable: true
+    }
+  });
+
+  /**
+   * Portfolio slider
+   */
+  window.addEventListener('load', () => {
+    const portfolioSlider = select('.portfolio-slider');
+    if (portfolioSlider) {
+      // Wait a bit for DOM to be fully ready and AOS to initialize
+      setTimeout(() => {
+        const paginationEl = portfolioSlider.querySelector('.swiper-pagination');
+        const nextEl = portfolioSlider.querySelector('.swiper-button-next');
+        const prevEl = portfolioSlider.querySelector('.swiper-button-prev');
+        const portfolioSwiper = new Swiper('.portfolio-slider', {
+          speed: 600,
+          loop: false,
+          slidesPerView: 'auto',
+          spaceBetween: 40,
+          freeMode: true,
+          grabCursor: true,
+          watchOverflow: true,
+          watchSlidesProgress: true,
+          observer: true,
+          observeParents: true,
+          autoplay: {
+            delay: 30000,
+            disableOnInteraction: false,
+            pauseOnMouseEnter: true
+          },
+          navigation: {
+            nextEl: nextEl,
+            prevEl: prevEl,
+          },
+          pagination: paginationEl ? {
+            el: paginationEl,
+            type: 'bullets',
+            clickable: true
+          } : false,
+          breakpoints: {
+            320: {
+              slidesPerView: 'auto',
+              spaceBetween: 20
+            },
+            576: {
+              slidesPerView: 'auto',
+              spaceBetween: 25
+            },
+            768: {
+              slidesPerView: 'auto',
+              spaceBetween: 30
+            },
+            992: {
+              slidesPerView: 'auto',
+              spaceBetween: 40
+            }
+          }
+        });
+        
+        // Update Swiper after initialization and images load
+        setTimeout(() => {
+          if (portfolioSwiper) {
+            portfolioSwiper.update();
+            portfolioSwiper.updateSlides();
+            portfolioSwiper.updateSlidesClasses();
+            portfolioSwiper.updateSize();
+          }
+        }, 300);
+        
+        // Truncate portfolio description text by words
+        const portfolioItems = portfolioSlider.querySelectorAll('.portfolio-info p');
+        portfolioItems.forEach(item => {
+          const originalText = item.textContent.trim();
+          const words = originalText.split(' ');
+          
+          // Show only 8 words initially (not hovered)
+          const initialWords = 8;
+          // Show 15 words on hover (truncated)
+          const hoverWords = 15;
+          
+          if (words.length > initialWords) {
+            item.setAttribute('data-full-text', originalText);
+            const truncatedText = words.slice(0, initialWords).join(' ') + '...';
+            item.textContent = truncatedText;
+            item.classList.add('truncated');
+            
+            // Show more words (but still truncated) on hover
+            const portfolioWrap = item.closest('.portfolio-wrap');
+            if (portfolioWrap) {
+              portfolioWrap.addEventListener('mouseenter', function() {
+                if (words.length > hoverWords) {
+                  const hoverText = words.slice(0, hoverWords).join(' ') + '...';
+                  item.textContent = hoverText;
+                } else {
+                  item.textContent = originalText;
+                }
+                item.classList.remove('truncated');
+              });
+              
+              portfolioWrap.addEventListener('mouseleave', function() {
+                item.textContent = words.slice(0, initialWords).join(' ') + '...';
+                item.classList.add('truncated');
+              });
+            }
+          }
+        });
+      }, 200);
+    }
+  });
+
+  /**
+   * Portfolio Modal
+   */
+  const portfolioModal = select('#portfolioModal');
+  const portfolioModalClose = select('.portfolio-modal-close');
+  const portfolioModalTitle = select('#portfolioModalTitle');
+  const portfolioModalDescription = select('#portfolioModalDescription');
+  const portfolioModalImages = select('#portfolioModalImages');
+  let portfolioModalSwiper = null;
+
+  // Open modal function
+  const openPortfolioModal = (title, description, images) => {
+    portfolioModalTitle.textContent = title;
+    portfolioModalDescription.textContent = description;
+    
+    // Clear previous images
+    portfolioModalImages.innerHTML = '';
+    
+    // Destroy existing Swiper if it exists
+    if (portfolioModalSwiper) {
+      portfolioModalSwiper.destroy(true, true);
+      portfolioModalSwiper = null;
+    }
+    
+    // Add images as Swiper slides
+    if (images && images.length > 0) {
+      images.forEach((imageSrc, index) => {
+        const slideDiv = document.createElement('div');
+        slideDiv.className = 'swiper-slide';
+        const imgDiv = document.createElement('div');
+        imgDiv.className = 'portfolio-modal-image-item';
+        const img = document.createElement('img');
+        img.src = imageSrc;
+        img.alt = title;
+        img.className = 'img-fluid';
+        imgDiv.appendChild(img);
+        slideDiv.appendChild(imgDiv);
+        portfolioModalImages.appendChild(slideDiv);
+      });
+    }
+    
+    // Initialize Swiper - always show slider regardless of image count
+    portfolioModalSwiper = new Swiper('.portfolio-modal-slider', {
+      speed: 400,
+      loop: images && images.length > 1, // Only loop if more than one image
+      autoplay: images && images.length > 1 ? {
+        delay: 5000,
+        disableOnInteraction: false
+      } : false,
+      pagination: {
+        el: '.portfolio-modal-slider .swiper-pagination',
+        type: 'bullets',
+        clickable: true,
+        dynamicBullets: images && images.length > 1
+      },
+      navigation: {
+        nextEl: '.portfolio-modal-slider .swiper-button-next',
+        prevEl: '.portfolio-modal-slider .swiper-button-prev',
+      },
+      spaceBetween: 20,
+      slidesPerView: 1,
+      centeredSlides: true,
+      allowTouchMove: true // Allow swiping even with single image
+    });
+    
+    portfolioModal.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+    
+    // Update Swiper after a short delay to ensure proper rendering
+    setTimeout(() => {
+      if (portfolioModalSwiper) {
+        portfolioModalSwiper.update();
+      }
+    }, 100);
+  };
+
+  // Close modal function
+  const closePortfolioModal = () => {
+    // Destroy Swiper when closing
+    if (portfolioModalSwiper) {
+      portfolioModalSwiper.destroy(true, true);
+      portfolioModalSwiper = null;
+    }
+    portfolioModal.style.display = 'none';
+    document.body.style.overflow = 'auto';
+  };
+
+  // Handle portfolio modal button clicks
+  on('click', '.portfolio-modal-btn', function(e) {
+    e.preventDefault();
+    const title = this.getAttribute('data-title');
+    const description = this.getAttribute('data-description');
+    const imagesJson = this.getAttribute('data-images');
+    let images = [];
+    
+    try {
+      images = JSON.parse(imagesJson);
+    } catch (e) {
+      console.error('Error parsing images JSON:', e);
+    }
+    
+    openPortfolioModal(title, description, images);
+  }, true);
+
+  // Close modal when clicking the close button
+  if (portfolioModalClose) {
+    portfolioModalClose.addEventListener('click', closePortfolioModal);
+  }
+
+  // Close modal when clicking outside the modal content
+  window.addEventListener('click', (e) => {
+    if (e.target === portfolioModal) {
+      closePortfolioModal();
+    }
+  });
+
+  // Close modal with Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && portfolioModal.style.display === 'block') {
+      closePortfolioModal();
     }
   });
 
