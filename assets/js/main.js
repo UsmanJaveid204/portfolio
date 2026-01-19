@@ -315,11 +315,22 @@
           }
         }, 300);
         
-        // Truncate portfolio description text by words
-        const portfolioItems = portfolioSlider.querySelectorAll('.portfolio-info p');
-        portfolioItems.forEach(item => {
-          const originalText = item.textContent.trim();
-          const words = originalText.split(' ');
+        // Truncate portfolio description text by words (single source: data-description)
+        const portfolioItems = portfolioSlider.querySelectorAll('.portfolio-wrap');
+        portfolioItems.forEach((portfolioWrap) => {
+          const item = portfolioWrap.querySelector('.portfolio-info p');
+          if (!item) return;
+
+          const modalBtn = portfolioWrap.querySelector('.portfolio-modal-btn');
+          const rawDescription = modalBtn ? modalBtn.getAttribute('data-description') : item.textContent;
+          const rawTech = modalBtn ? modalBtn.getAttribute('data-tech') : '';
+
+          // Remove any "Tech Stack:" line if user put it inside description
+          const extracted = extractTechAndDescription(rawTech, rawDescription || '');
+          const previewSource = markdownToPlainText(extracted.description);
+
+          const originalText = previewSource || item.textContent.trim();
+          const words = originalText.split(' ').filter(Boolean);
           
           // Show only 8 words initially (not hovered)
           const initialWords = 8;
@@ -333,7 +344,6 @@
             item.classList.add('truncated');
             
             // Show more words (but still truncated) on hover
-            const portfolioWrap = item.closest('.portfolio-wrap');
             if (portfolioWrap) {
               portfolioWrap.addEventListener('mouseenter', function() {
                 if (words.length > hoverWords) {
@@ -362,14 +372,178 @@
   const portfolioModal = select('#portfolioModal');
   const portfolioModalClose = select('.portfolio-modal-close');
   const portfolioModalTitle = select('#portfolioModalTitle');
+  const portfolioModalTech = select('#portfolioModalTech');
   const portfolioModalDescription = select('#portfolioModalDescription');
   const portfolioModalImages = select('#portfolioModalImages');
   let portfolioModalSwiper = null;
 
+  const normalizeWhitespace = (str) => (str || '').replace(/\s+/g, ' ').trim();
+
+  const preprocessDescription = (raw) => {
+    // Allow easy single-line authoring using " - " separators.
+    // Example: "Summary. - Bullet 1. - Bullet 2."
+    const str = (raw || '').replace(/\r\n/g, '\n');
+    if (str.includes('\n')) return str;
+    return str.replace(/\s+-\s+/g, '\n- ');
+  };
+
+  const extractTechAndDescription = (rawTech, rawDescription) => {
+    const techFromAttr = normalizeWhitespace(rawTech);
+    if (techFromAttr) return { tech: techFromAttr, description: rawDescription || '' };
+
+    // Optional fallback: allow "Tech Stack: ..." inside description
+    const text = preprocessDescription(rawDescription || '');
+    const lines = text.split('\n');
+    const idx = lines.findIndex((l) => /^\s*tech\s*stack\s*:/i.test(l));
+    if (idx === -1) return { tech: '', description: rawDescription || '' };
+
+    const techLine = lines[idx];
+    const tech = normalizeWhitespace(techLine.replace(/^\s*tech\s*stack\s*:\s*/i, ''));
+    const remaining = lines.filter((_, i) => i !== idx).join('\n');
+    return { tech, description: remaining };
+  };
+
+  const escapeHtml = (str) =>
+    (str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+  const inlineMarkdown = (str) => {
+    // NOTE: input should already be HTML-escaped
+    let s = str;
+    // links: [text](url)
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // bold
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    // italic
+    s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[^_])_([^_]+)_/g, '$1<em>$2</em>');
+    // inline code
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return s;
+  };
+
+  const markdownToHtml = (raw) => {
+    const text = preprocessDescription(raw || '').trim();
+    if (!text) return '';
+
+    const lines = text.split('\n');
+    const out = [];
+    let para = [];
+    let listType = null; // 'ul' | 'ol'
+    let listItems = [];
+
+    const flushPara = () => {
+      if (!para.length) return;
+      const html = inlineMarkdown(escapeHtml(para.join('\n')).replace(/\n/g, '<br>'));
+      out.push(`<p>${html}</p>`);
+      para = [];
+    };
+
+    const flushList = () => {
+      if (!listType || !listItems.length) return;
+      const items = listItems
+        .map((li) => `<li>${inlineMarkdown(escapeHtml(li))}</li>`)
+        .join('');
+      out.push(`<${listType}>${items}</${listType}>`);
+      listType = null;
+      listItems = [];
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        flushPara();
+        flushList();
+        continue;
+      }
+
+      // Headings (easy font control): ## / ### / ####
+      const hMatch = trimmed.match(/^(#{2,4})\s+(.+)$/);
+      if (hMatch) {
+        flushPara();
+        flushList();
+        const level = Math.min(4, Math.max(2, hMatch[1].length)); // h2-h4 only
+        out.push(`<h${level}>${inlineMarkdown(escapeHtml(hMatch[2]))}</h${level}>`);
+        continue;
+      }
+
+      // Ordered list: "1. item" or "1) item"
+      const olMatch = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
+      if (olMatch) {
+        flushPara();
+        if (listType && listType !== 'ol') flushList();
+        listType = 'ol';
+        listItems.push(olMatch[2]);
+        continue;
+      }
+
+      // Unordered list: "- item", "* item", "• item"
+      const ulMatch = trimmed.match(/^([-*•])\s+(.+)$/);
+      if (ulMatch) {
+        flushPara();
+        if (listType && listType !== 'ul') flushList();
+        listType = 'ul';
+        listItems.push(ulMatch[2]);
+        continue;
+      }
+
+      // Normal paragraph line
+      if (listType) flushList();
+      para.push(trimmed);
+    }
+
+    flushPara();
+    flushList();
+    return out.join('');
+  };
+
+  const markdownToPlainText = (raw) => {
+    const text = preprocessDescription(raw || '').replace(/\r\n/g, '\n');
+    return text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => l.replace(/^(\d+)[.)]\s+/, '').replace(/^[-*•]\s+/, ''))
+      .join(' ')
+      // strip markdown syntax
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/(^|[^*])\*([^*]+)\*/g, '$1$2')
+      .replace(/(^|[^_])_([^_]+)_/g, '$1$2')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const renderModalDescription = (containerEl, rawDescription) => {
+    if (!containerEl) return;
+    containerEl.innerHTML = markdownToHtml(rawDescription);
+  };
+
   // Open modal function
-  const openPortfolioModal = (title, description, images) => {
+  const openPortfolioModal = (title, tech, description, images) => {
     portfolioModalTitle.textContent = title;
-    portfolioModalDescription.textContent = description;
+
+    if (portfolioModalTech) {
+      const techText = normalizeWhitespace(tech);
+      if (techText) {
+        portfolioModalTech.hidden = false;
+        portfolioModalTech.textContent = `Tech Stack: ${techText}`;
+      } else {
+        portfolioModalTech.hidden = true;
+        portfolioModalTech.textContent = '';
+      }
+    }
+
+    renderModalDescription(portfolioModalDescription, description);
     
     // Clear previous images
     portfolioModalImages.innerHTML = '';
@@ -447,7 +621,8 @@
   on('click', '.portfolio-modal-btn', function(e) {
     e.preventDefault();
     const title = this.getAttribute('data-title');
-    const description = this.getAttribute('data-description');
+    const rawTech = this.getAttribute('data-tech');
+    const rawDescription = this.getAttribute('data-description');
     const imagesJson = this.getAttribute('data-images');
     let images = [];
     
@@ -457,7 +632,32 @@
       console.error('Error parsing images JSON:', e);
     }
     
-    openPortfolioModal(title, description, images);
+    const { tech, description } = extractTechAndDescription(rawTech, rawDescription);
+    openPortfolioModal(title, tech, description, images);
+  }, true);
+
+  // Open modal when clicking anywhere on the portfolio card
+  on('click', '.portfolio .portfolio-wrap', function(e) {
+    // If user clicked on one of the action buttons (plus/link), let that handle it
+    if (e.target && e.target.closest && e.target.closest('.portfolio-links a')) return;
+
+    const modalBtn = this.querySelector('.portfolio-modal-btn');
+    if (!modalBtn) return;
+
+    const title = modalBtn.getAttribute('data-title') || (this.querySelector('.portfolio-info h4')?.textContent || '').trim();
+    const rawTech = modalBtn.getAttribute('data-tech');
+    const rawDescription = modalBtn.getAttribute('data-description') || '';
+    const imagesJson = modalBtn.getAttribute('data-images') || '[]';
+    let images = [];
+
+    try {
+      images = JSON.parse(imagesJson);
+    } catch (err) {
+      console.error('Error parsing images JSON:', err);
+    }
+
+    const { tech, description } = extractTechAndDescription(rawTech, rawDescription);
+    openPortfolioModal(title, tech, description, images);
   }, true);
 
   // Close modal when clicking the close button
